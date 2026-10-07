@@ -1,0 +1,14 @@
+{
+  "five_hour": {
+    "utilization": 42.0,
+    "resets_at": "2026-09-04T12:00:00+00:00"
+  },
+  "seven_day": {
+    "utilization": 58.0,
+    "resets_at": "2026-09-08T12:00:00+00:00"
+  },
+  "nimbus_quill": {
+    "utilization": 0.0,
+    "resets_at": null
+  }
+}

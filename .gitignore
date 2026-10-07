@@ -1,0 +1,17 @@
+# Build output
+bin/
+obj/
+artifacts/
+TestResults/
+
+# Working notes and agent instructions stay local; only source and README are published
+memory/
+CLAUDE.md
+AGENTS.md
+PROJECT_PLAN.md
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo

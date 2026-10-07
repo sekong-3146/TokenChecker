@@ -1,0 +1,2 @@
+# The sources are UTF-8 without BOM with LF line endings; keep them that way on every checkout.
+* text=auto eol=lf
