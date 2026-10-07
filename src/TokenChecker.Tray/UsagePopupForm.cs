@@ -15,6 +15,9 @@ internal sealed class UsagePopupForm : Form
     private const string PinGlyph = "";
     private const string UnpinGlyph = "";
     private const int ResizeGripDip = 5;
+    private const int WmSettingChange = 0x001A;
+    private const int WmDisplayChange = 0x007E;
+    private const int SpiSetWorkArea = 0x002F;
     private const uint SwpNoSize = 0x0001;
     private const uint SwpNoMove = 0x0002;
     private const uint SwpNoActivate = 0x0010;
@@ -213,7 +216,11 @@ internal sealed class UsagePopupForm : Form
         var screen = Screen.AllScreens.FirstOrDefault(candidate =>
                          string.Equals(candidate.DeviceName, TargetScreenDeviceName, StringComparison.OrdinalIgnoreCase))
                      ?? (stayOnCurrentScreen ? Screen.FromControl(this) : Screen.FromPoint(Cursor.Position));
-        var workArea = screen.WorkingArea;
+        // Asked again through a fresh Screen: the cached one can still report the work area from
+        // before a taskbar or scale change.
+        var bounds = screen.Bounds;
+        var workArea = Screen.FromPoint(new Point(bounds.Left + (bounds.Width / 2), bounds.Top + (bounds.Height / 2)))
+            .WorkingArea;
         // A size saved on a larger screen must still fit this one.
         if (Width > workArea.Width || Height > workArea.Height)
         {
@@ -252,6 +259,24 @@ internal sealed class UsagePopupForm : Form
         ApplyDpiDependentBounds();
         RebuildRows();
         MoveToWorkAreaCorner(stayOnCurrentScreen: true);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        base.WndProc(ref m);
+        var workAreaChanged = m.Msg == WmSettingChange && unchecked((int)(long)m.WParam) == SpiSetWorkArea;
+        if ((workAreaChanged || m.Msg == WmDisplayChange) && Visible && !resizingLeft && !resizingTop)
+        {
+            // After a scale change the taskbar resizes later than the DPI notification, so the corner
+            // found in OnDpiChanged is stale; anchor again once Windows reports the new work area.
+            BeginInvoke(() =>
+            {
+                if (!IsDisposed && Visible)
+                {
+                    MoveToWorkAreaCorner(stayOnCurrentScreen: true);
+                }
+            });
+        }
     }
 
     private void ApplyDpiDependentBounds()
