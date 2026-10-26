@@ -22,9 +22,13 @@ internal sealed class TaskbarOverlayForm : Form
 
     private readonly System.Windows.Forms.Timer trackTimer;
     private readonly ToolTip toolTip;
-    // Kept in a field: the native hook calls it for as long as the hook exists.
+    // Kept in fields: the native hooks call them for as long as the hooks exist.
     private readonly WinEventProc foregroundChanged;
+    private readonly WinEventProc zOrderChanged;
     private IntPtr foregroundHook;
+    private IntPtr zOrderHook;
+    private uint zOrderHookProcessId;
+    private IntPtr trackedTaskbar;
     private IReadOnlyList<OverlayEntry> entries = Array.Empty<OverlayEntry>();
     private int warnThresholdPercent = 75;
     private int criticalThresholdPercent = 90;
@@ -46,6 +50,13 @@ internal sealed class TaskbarOverlayForm : Form
         trackTimer = new System.Windows.Forms.Timer { Interval = TrackIntervalMilliseconds };
         trackTimer.Tick += (_, _) => Track();
         foregroundChanged = (_, _, _, _, _, _, _) => Track();
+        zOrderChanged = (_, _, _, _, _, _, _) =>
+        {
+            if (Visible && trackedTaskbar != IntPtr.Zero)
+            {
+                KeepAbove(trackedTaskbar);
+            }
+        };
     }
 
     public event EventHandler? LeftClicked;
@@ -68,8 +79,7 @@ internal sealed class TaskbarOverlayForm : Form
     {
         if (foregroundHook == IntPtr.Zero)
         {
-            // A click on the taskbar raises it above this window; reacting to the foreground change
-            // puts the overlay back on top at once instead of on the next timer tick.
+            // A full-screen window can come to the front at any time; check again at once.
             foregroundHook = SetWinEventHook(
                 EventSystemForeground,
                 EventSystemForeground,
@@ -146,6 +156,7 @@ internal sealed class TaskbarOverlayForm : Form
             foregroundHook = IntPtr.Zero;
         }
 
+        UnhookZOrder();
         if (disposing)
         {
             trackTimer.Dispose();
@@ -164,11 +175,14 @@ internal sealed class TaskbarOverlayForm : Form
         }
 
         var taskbar = FindWindow("Shell_TrayWnd", null);
+        trackedTaskbar = taskbar;
         if (taskbar == IntPtr.Zero || !IsWindowVisible(taskbar) || !GetWindowRect(taskbar, out var taskbarRect))
         {
             HideOverlay();
             return;
         }
+
+        HookZOrder(taskbar);
 
         var taskbarBounds = taskbarRect.ToRectangle();
         var screenBounds = Screen.FromRectangle(taskbarBounds).Bounds;
@@ -410,8 +424,42 @@ internal sealed class TaskbarOverlayForm : Form
         }
     }
 
-    // Clicking the taskbar lifts it above other topmost windows; put the overlay back only when that happened,
-    // so it does not keep jumping over unrelated topmost windows such as menus.
+    // A click on the taskbar lifts it above this window without always changing the foreground window, and
+    // waiting for the timer left the overlay hidden for ~200 ms (a visible blink). Explorer reports every
+    // z-order change of its windows, so the overlay is put back within the same frame instead.
+    private void HookZOrder(IntPtr taskbar)
+    {
+        GetWindowThreadProcessId(taskbar, out var processId);
+        if (processId == 0 || (zOrderHook != IntPtr.Zero && processId == zOrderHookProcessId))
+        {
+            return;
+        }
+
+        // A new Explorer process (after a restart) needs a new hook.
+        UnhookZOrder();
+        zOrderHook = SetWinEventHook(
+            EventObjectReorder,
+            EventObjectReorder,
+            IntPtr.Zero,
+            zOrderChanged,
+            processId,
+            0,
+            WinEventOutOfContext);
+        zOrderHookProcessId = zOrderHook == IntPtr.Zero ? 0 : processId;
+    }
+
+    private void UnhookZOrder()
+    {
+        if (zOrderHook != IntPtr.Zero)
+        {
+            UnhookWinEvent(zOrderHook);
+            zOrderHook = IntPtr.Zero;
+            zOrderHookProcessId = 0;
+        }
+    }
+
+    // Puts the overlay back only when the taskbar is above it, so it does not keep jumping over unrelated
+    // topmost windows such as menus.
     private void KeepAbove(IntPtr taskbar)
     {
         var current = GetWindow(Handle, GwHwndPrev);
@@ -484,6 +532,7 @@ internal sealed class TaskbarOverlayForm : Form
     private const uint SwpNoActivate = 0x0010;
     private const uint GwHwndPrev = 3;
     private const uint EventSystemForeground = 0x0003;
+    private const uint EventObjectReorder = 0x8004;
     private const uint WinEventOutOfContext = 0x0000;
     private const int UlwAlpha = 0x00000002;
     private const byte AcSrcOver = 0x00;
@@ -557,6 +606,9 @@ internal sealed class TaskbarOverlayForm : Form
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetWindow(IntPtr hWnd, uint command);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
