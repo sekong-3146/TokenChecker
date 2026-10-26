@@ -313,7 +313,7 @@ public sealed class CodexUsageProvider : IUsageProvider, IPushUsageProvider, IDi
                     id = initializeId,
                     @params = new
                     {
-                        clientInfo = new { name = "token_checker", title = "TokenChecker", version = "1.0.1" }
+                        clientInfo = new { name = "token_checker", title = "TokenChecker", version = "1.0.2" }
                     }
                 },
                 startupTimeout,
