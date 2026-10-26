@@ -16,7 +16,9 @@ internal sealed class SettingsForm : Form
     private readonly NumericUpDown warnThresholdInput;
     private readonly NumericUpDown criticalThresholdInput;
     private readonly CheckBox startWithWindowsCheckBox;
-    private readonly CheckBox taskbarOverlayCheckBox;
+    private readonly ComboBox taskbarOverlayComboBox;
+    // Parallel to the combo box items: the TaskbarOverlayEnabled and TaskbarOverlayScreen values of each choice.
+    private readonly List<(bool Enabled, string? Screen)> taskbarOverlayChoices = new();
     // No longer editable here (Codex is found on PATH or in its install folder); an older saved path is kept.
     private readonly string? codexExecutablePath;
     private readonly Label agentsTitleLabel;
@@ -68,14 +70,14 @@ internal sealed class SettingsForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 9,
+            RowCount = 10,
             Padding = new Padding(Dip(14), Dip(14), Dip(14), Dip(8)),
             BackColor = SystemColors.Window,
             ForeColor = SystemColors.WindowText
         };
         content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Dip(145)));
         content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (var index = 0; index < 7; index++)
+        for (var index = 0; index < 8; index++)
         {
             content.RowStyles.Add(new RowStyle(SizeType.Absolute, Dip(40)));
         }
@@ -151,37 +153,21 @@ internal sealed class SettingsForm : Form
         criticalThresholdInput = CreatePercentInput(settings.CriticalThresholdPercent, "CriticalThresholdInput", "위험 임계값");
         AddSettingRow(content, 5, "위험 임계값", criticalThresholdInput, "%");
 
+        taskbarOverlayComboBox = CreateComboBox("TaskbarOverlayComboBox", "작업 표시줄 표시");
+        PopulateTaskbarOverlayChoices(settings.TaskbarOverlayEnabled, settings.TaskbarOverlayScreen);
+        AddSettingRow(content, 6, "작업 표시줄 표시", taskbarOverlayComboBox);
+
         startWithWindowsCheckBox = new CheckBox
         {
             Text = "Windows 시작 시 실행",
             AutoSize = true,
             Checked = startupEnabled,
-            Margin = new Padding(0, Dip(10), Dip(24), 0),
+            Anchor = AnchorStyles.Left,
             AccessibleName = "Windows 시작 시 실행",
             Name = "StartWithWindowsCheckBox"
         };
-        taskbarOverlayCheckBox = new CheckBox
-        {
-            Text = "작업 표시줄에 사용량 표시",
-            AutoSize = true,
-            Checked = settings.TaskbarOverlayEnabled,
-            Margin = new Padding(0, Dip(10), 0, 0),
-            AccessibleName = "작업 표시줄에 사용량 표시",
-            Name = "TaskbarOverlayCheckBox"
-        };
-        // Both options share one row so the agent list keeps its height on short screens.
-        var optionsPanel = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            Margin = new Padding(0),
-            BackColor = SystemColors.Window
-        };
-        optionsPanel.Controls.Add(startWithWindowsCheckBox);
-        optionsPanel.Controls.Add(taskbarOverlayCheckBox);
-        content.Controls.Add(optionsPanel, 0, 6);
-        content.SetColumnSpan(optionsPanel, 2);
+        content.Controls.Add(startWithWindowsCheckBox, 0, 7);
+        content.SetColumnSpan(startWithWindowsCheckBox, 2);
 
         codexExecutablePath = settings.CodexExecutablePath;
 
@@ -193,7 +179,7 @@ internal sealed class SettingsForm : Form
             AccessibleName = "확인할 에이전트 수",
             Name = "AgentsTitleLabel"
         };
-        content.Controls.Add(agentsTitleLabel, 0, 7);
+        content.Controls.Add(agentsTitleLabel, 0, 8);
         content.SetColumnSpan(agentsTitleLabel, 2);
 
         var agentsPanel = new TableLayoutPanel
@@ -254,7 +240,7 @@ internal sealed class SettingsForm : Form
         };
         addPanel.Controls.Add(agentLimitLabel, 2, 0);
         agentsPanel.Controls.Add(addPanel, 0, 1);
-        content.Controls.Add(agentsPanel, 0, 8);
+        content.Controls.Add(agentsPanel, 0, 9);
         content.SetColumnSpan(agentsPanel, 2);
 
         Controls.Add(content);
@@ -334,14 +320,8 @@ internal sealed class SettingsForm : Form
         var screens = Screen.AllScreens;
         for (var index = 0; index < screens.Length; index++)
         {
-            var screen = screens[index];
-            // Device names look like \\.\DISPLAYn; n is shown so the entries can be told apart.
-            var digits = new string(screen.DeviceName.Where(char.IsAsciiDigit).ToArray());
-            var number = digits.Length > 0 ? digits : (index + 1).ToString();
-            var primary = screen.Primary ? ", 주 모니터" : string.Empty;
-            popupScreenDeviceNames.Add(screen.DeviceName);
-            popupScreenComboBox.Items.Add(
-                $"모니터 {number} ({screen.Bounds.Width}x{screen.Bounds.Height}{primary})");
+            popupScreenDeviceNames.Add(screens[index].DeviceName);
+            popupScreenComboBox.Items.Add(DescribeScreen(screens[index], index));
         }
 
         var selectedIndex = string.IsNullOrWhiteSpace(selectedDeviceName)
@@ -357,6 +337,46 @@ internal sealed class SettingsForm : Form
         }
 
         popupScreenComboBox.SelectedIndex = selectedIndex;
+    }
+
+    private void PopulateTaskbarOverlayChoices(bool enabled, string? selectedScreen)
+    {
+        void Add(string text, bool choiceEnabled, string? screen)
+        {
+            taskbarOverlayChoices.Add((choiceEnabled, screen));
+            taskbarOverlayComboBox.Items.Add(text);
+        }
+
+        Add("끄기", false, null);
+        Add("주 모니터", true, null);
+        Add("모든 모니터", true, AppSettings.AllTaskbarOverlayScreens);
+        var screens = Screen.AllScreens;
+        for (var index = 0; index < screens.Length; index++)
+        {
+            Add(DescribeScreen(screens[index], index), true, screens[index].DeviceName);
+        }
+
+        var selectedIndex = !enabled
+            ? 0
+            : taskbarOverlayChoices.FindIndex(choice =>
+                choice.Enabled && string.Equals(choice.Screen, selectedScreen, StringComparison.OrdinalIgnoreCase));
+        if (selectedIndex < 0)
+        {
+            // Keep a disconnected monitor selectable so saving does not silently drop it.
+            Add($"{selectedScreen!.TrimStart('\\', '.')} (연결 안 됨)", true, selectedScreen);
+            selectedIndex = taskbarOverlayChoices.Count - 1;
+        }
+
+        taskbarOverlayComboBox.SelectedIndex = selectedIndex;
+    }
+
+    // Device names look like \\.\DISPLAYn; n is shown so the entries can be told apart.
+    private static string DescribeScreen(Screen screen, int index)
+    {
+        var digits = new string(screen.DeviceName.Where(char.IsAsciiDigit).ToArray());
+        var number = digits.Length > 0 ? digits : (index + 1).ToString();
+        var primary = screen.Primary ? ", 주 모니터" : string.Empty;
+        return $"모니터 {number} ({screen.Bounds.Width}x{screen.Bounds.Height}{primary})";
     }
 
     private FlowLayoutPanel CreateButtonsPanel()
@@ -610,7 +630,7 @@ internal sealed class SettingsForm : Form
         warnThresholdInput.Enabled = !loginInProgress && !saving;
         criticalThresholdInput.Enabled = !loginInProgress && !saving;
         startWithWindowsCheckBox.Enabled = !loginInProgress && !saving;
-        taskbarOverlayCheckBox.Enabled = !loginInProgress && !saving;
+        taskbarOverlayComboBox.Enabled = !loginInProgress && !saving;
         addAgentButton.Enabled = !loginInProgress && !saving && agents.Count < AppSettings.MaxAgents;
         addAgentKindComboBox.Enabled = !loginInProgress && !saving && agents.Count < AppSettings.MaxAgents;
 
@@ -883,7 +903,8 @@ internal sealed class SettingsForm : Form
                 ? popupScreenDeviceNames[popupScreenComboBox.SelectedIndex]
                 : null,
             PopupTransparencyPercent = decimal.ToInt32(popupTransparencyInput.Value),
-            TaskbarOverlayEnabled = taskbarOverlayCheckBox.Checked,
+            TaskbarOverlayEnabled = taskbarOverlayChoices[Math.Max(0, taskbarOverlayComboBox.SelectedIndex)].Enabled,
+            TaskbarOverlayScreen = taskbarOverlayChoices[Math.Max(0, taskbarOverlayComboBox.SelectedIndex)].Screen,
             CodexExecutablePath = codexExecutablePath,
             Agents = agents.Select(account => account.Clone()).ToList()
         };

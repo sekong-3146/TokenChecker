@@ -9,7 +9,7 @@ using TokenChecker.Core;
 namespace TokenChecker.Tray;
 
 // Windows 11 has no API for third-party content inside the taskbar, so this borderless window floats above
-// the primary taskbar, just left of the notification area, and follows it while the app runs.
+// one monitor's taskbar, just left of the notification area or clock, and follows it while the app runs.
 internal sealed class TaskbarOverlayForm : Form
 {
     private const int GapDip = 6;
@@ -19,6 +19,8 @@ internal sealed class TaskbarOverlayForm : Form
     // Below this taskbar height two text lines no longer fit, so each account goes on one line.
     private const int TwoLineMinHeightDip = 36;
     private const int TrackIntervalMilliseconds = 250;
+    // Width of the date/time a secondary taskbar draws at its right end, measured at 150% on Windows 11.
+    private const int SecondaryClockDip = 110;
 
     private readonly System.Windows.Forms.Timer trackTimer;
     private readonly ToolTip toolTip;
@@ -29,6 +31,7 @@ internal sealed class TaskbarOverlayForm : Form
     private IntPtr zOrderHook;
     private uint zOrderHookProcessId;
     private IntPtr trackedTaskbar;
+    private bool isPrimaryTaskbar;
     private IReadOnlyList<OverlayEntry> entries = Array.Empty<OverlayEntry>();
     private int warnThresholdPercent = 75;
     private int criticalThresholdPercent = 90;
@@ -37,8 +40,9 @@ internal sealed class TaskbarOverlayForm : Form
     private int renderedDpi;
     private bool contentChanged = true;
 
-    public TaskbarOverlayForm()
+    public TaskbarOverlayForm(string screenDeviceName)
     {
+        ScreenDeviceName = screenDeviceName ?? throw new ArgumentNullException(nameof(screenDeviceName));
         AutoScaleMode = AutoScaleMode.None;
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -58,6 +62,9 @@ internal sealed class TaskbarOverlayForm : Form
             }
         };
     }
+
+    // Screen.DeviceName of the monitor whose taskbar this overlay sits on.
+    public string ScreenDeviceName { get; }
 
     public event EventHandler? LeftClicked;
 
@@ -174,9 +181,13 @@ internal sealed class TaskbarOverlayForm : Form
             return;
         }
 
-        var taskbar = FindWindow("Shell_TrayWnd", null);
+        var screen = Screen.AllScreens.FirstOrDefault(candidate =>
+            string.Equals(candidate.DeviceName, ScreenDeviceName, StringComparison.OrdinalIgnoreCase));
+        var taskbar = screen is null ? IntPtr.Zero : FindTaskbar(screen, out isPrimaryTaskbar);
         trackedTaskbar = taskbar;
-        if (taskbar == IntPtr.Zero || !IsWindowVisible(taskbar) || !GetWindowRect(taskbar, out var taskbarRect))
+        // No taskbar there: the monitor is gone, or Windows shows the taskbar on the main display only.
+        if (screen is null || taskbar == IntPtr.Zero || !IsWindowVisible(taskbar) ||
+            !GetWindowRect(taskbar, out var taskbarRect))
         {
             HideOverlay();
             return;
@@ -185,7 +196,7 @@ internal sealed class TaskbarOverlayForm : Form
         HookZOrder(taskbar);
 
         var taskbarBounds = taskbarRect.ToRectangle();
-        var screenBounds = Screen.FromRectangle(taskbarBounds).Bounds;
+        var screenBounds = screen.Bounds;
         var onScreen = Rectangle.Intersect(taskbarBounds, screenBounds);
         // A vertical taskbar has no room for the text; an auto-hidden one has slid almost off the screen.
         if (taskbarBounds.Width <= taskbarBounds.Height ||
@@ -202,10 +213,12 @@ internal sealed class TaskbarOverlayForm : Form
             dpi = 96;
         }
 
-        var notifyArea = FindWindowEx(taskbar, IntPtr.Zero, "TrayNotifyWnd", null);
+        // Only the main taskbar has a notification-area window; a secondary one draws just the clock at its
+        // right end, with no window to measure, so that space is kept free instead.
+        var notifyArea = isPrimaryTaskbar ? FindWindowEx(taskbar, IntPtr.Zero, "TrayNotifyWnd", null) : IntPtr.Zero;
         var right = notifyArea != IntPtr.Zero && GetWindowRect(notifyArea, out var notifyRect) && notifyRect.Left > taskbarBounds.Left
             ? notifyRect.Left
-            : taskbarBounds.Right - Scale(200, dpi);
+            : taskbarBounds.Right - Scale(isPrimaryTaskbar ? 200 : SecondaryClockDip, dpi);
         right -= Scale(GapDip, dpi);
 
         if (contentChanged || renderedBounds.Height != taskbarBounds.Height || renderedBounds.Right != right ||
@@ -220,6 +233,27 @@ internal sealed class TaskbarOverlayForm : Form
         }
 
         KeepAbove(taskbar);
+    }
+
+    // The main taskbar is Shell_TrayWnd; with "show taskbar on all displays" every other monitor has a
+    // Shell_SecondaryTrayWnd. Each is matched to a monitor by the screen it is on.
+    private static IntPtr FindTaskbar(Screen screen, out bool isPrimary)
+    {
+        foreach (var className in new[] { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" })
+        {
+            var candidate = IntPtr.Zero;
+            while ((candidate = FindWindowEx(IntPtr.Zero, candidate, className, null)) != IntPtr.Zero)
+            {
+                if (string.Equals(Screen.FromHandle(candidate).DeviceName, screen.DeviceName, StringComparison.OrdinalIgnoreCase))
+                {
+                    isPrimary = className == "Shell_TrayWnd";
+                    return candidate;
+                }
+            }
+        }
+
+        isPrimary = false;
+        return IntPtr.Zero;
     }
 
     private void HideOverlay()

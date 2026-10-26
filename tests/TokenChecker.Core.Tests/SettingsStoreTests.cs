@@ -105,7 +105,8 @@ public sealed class SettingsStoreTests
             PopupPinned = true,
             PopupScreen = @"\\.\DISPLAY2",
             PopupTransparencyPercent = 35,
-            TaskbarOverlayEnabled = true
+            TaskbarOverlayEnabled = true,
+            TaskbarOverlayScreen = " " + AppSettings.AllTaskbarOverlayScreens + " "
         };
 
         store.Save(expected);
@@ -113,6 +114,8 @@ public sealed class SettingsStoreTests
 
         Assert.IsTrue(actual.TaskbarOverlayEnabled);
         Assert.IsTrue(expected.Clone().TaskbarOverlayEnabled);
+        Assert.AreEqual(AppSettings.AllTaskbarOverlayScreens, actual.TaskbarOverlayScreen);
+        Assert.AreEqual(expected.TaskbarOverlayScreen, expected.Clone().TaskbarOverlayScreen);
         Assert.AreEqual(expected.PopupWidth, actual.PopupWidth);
         Assert.AreEqual(expected.PopupHeight, actual.PopupHeight);
         Assert.AreEqual(expected.PopupPinned, actual.PopupPinned);

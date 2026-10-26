@@ -89,6 +89,10 @@ public sealed class SettingsStore
             0,
             AppSettings.MaxPopupTransparencyPercent);
 
+        normalized.TaskbarOverlayScreen = string.IsNullOrWhiteSpace(normalized.TaskbarOverlayScreen)
+            ? null
+            : normalized.TaskbarOverlayScreen.Trim();
+
         if (normalized.Agents is null && migrateLegacy)
         {
             normalized.Agents = normalized.GetAgents().Select(account => account.Clone()).ToList();

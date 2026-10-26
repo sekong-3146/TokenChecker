@@ -13,6 +13,8 @@ public sealed class AppSettings
     // Capped so the popup can never be made invisible.
     public const int MaxPopupTransparencyPercent = 80;
 
+    public const string AllTaskbarOverlayScreens = "*";
+
     public int RefreshIntervalMinutes { get; set; } = 5;
 
     public UsageDisplayMode DisplayMode { get; set; } = UsageDisplayMode.Used;
@@ -44,8 +46,12 @@ public sealed class AppSettings
     // 0 is opaque; see MaxPopupTransparencyPercent.
     public int PopupTransparencyPercent { get; set; }
 
-    // Shows a compact usage strip over the primary taskbar, next to the notification area.
+    // Shows a compact usage strip over the taskbar, next to the notification area or clock.
     public bool TaskbarOverlayEnabled { get; set; }
+
+    // Which taskbars get the strip: null is the primary monitor's, AllTaskbarOverlayScreens is every monitor's,
+    // anything else a Windows display device name (falls back to the primary one while disconnected).
+    public string? TaskbarOverlayScreen { get; set; }
 
     public IReadOnlyList<AgentAccount> GetAgents()
     {
@@ -91,6 +97,7 @@ public sealed class AppSettings
         PopupScreen = PopupScreen,
         PopupTransparencyPercent = PopupTransparencyPercent,
         TaskbarOverlayEnabled = TaskbarOverlayEnabled,
+        TaskbarOverlayScreen = TaskbarOverlayScreen,
         Agents = Agents?
             .Where(account => account is not null)
             .Select(account => account!.Clone())

@@ -29,7 +29,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private UsageRefreshCoordinator? coordinator;
     private HttpClient? httpClient;
     private UsagePopupForm? popup;
-    private TaskbarOverlayForm? overlay;
+    private readonly List<TaskbarOverlayForm> overlays = new();
     private SettingsForm? settingsForm;
     private bool initialized;
     private bool closing;
@@ -96,6 +96,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Enabled = false
         };
         refreshTimer.Tick += (_, _) => _ = RefreshAsync(manual: false);
+        // A static event: unsubscribed again on exit.
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += HandleDisplaySettingsChanged;
 
         _ = InitializeAsync();
     }
@@ -316,7 +318,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             popup.UpdateSnapshots(snapshots, settings.DisplayMode);
         }
 
-        if (overlay is not null && !overlay.IsDisposed)
+        foreach (var overlay in overlays)
         {
             overlay.UpdateSnapshots(
                 snapshots,
@@ -326,7 +328,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    // Creates or removes the taskbar overlay to match the saved setting.
+    // Creates or removes taskbar overlays so there is one per monitor the saved setting asks for.
     private void ApplyTaskbarOverlay()
     {
         if (closing)
@@ -334,28 +336,46 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        if (!settings.TaskbarOverlayEnabled)
+        var targets = settings.TaskbarOverlayEnabled
+            ? TaskbarOverlayTargets.Resolve(
+                settings.TaskbarOverlayScreen,
+                Screen.AllScreens.Select(screen => new DisplayScreen(screen.DeviceName, screen.Primary)).ToArray())
+            : Array.Empty<string>();
+        foreach (var stale in overlays
+                     .Where(overlay => !targets.Contains(overlay.ScreenDeviceName, StringComparer.OrdinalIgnoreCase))
+                     .ToArray())
         {
-            overlay?.Close();
-            overlay?.Dispose();
-            overlay = null;
-            return;
+            overlays.Remove(stale);
+            stale.Close();
+            stale.Dispose();
         }
 
-        if (overlay is null || overlay.IsDisposed)
+        foreach (var target in targets)
         {
-            overlay = new TaskbarOverlayForm();
-            overlay.LeftClicked += (_, _) => TogglePopup();
-            overlay.RightClicked += (sender, _) => ShowOverlayMenu(sender as Form);
-            overlay.Start();
+            if (overlays.Any(overlay => string.Equals(overlay.ScreenDeviceName, target, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            var created = new TaskbarOverlayForm(target);
+            created.LeftClicked += (_, _) => TogglePopup();
+            created.RightClicked += (sender, _) => ShowOverlayMenu(sender as Form);
+            created.Start();
+            overlays.Add(created);
         }
 
-        overlay.UpdateSnapshots(
-            coordinator?.Current ?? Array.Empty<UsageSnapshot>(),
-            settings.DisplayMode,
-            settings.WarnThresholdPercent,
-            settings.CriticalThresholdPercent);
+        foreach (var overlay in overlays)
+        {
+            overlay.UpdateSnapshots(
+                coordinator?.Current ?? Array.Empty<UsageSnapshot>(),
+                settings.DisplayMode,
+                settings.WarnThresholdPercent,
+                settings.CriticalThresholdPercent);
+        }
     }
+
+    // A monitor was connected, removed or made primary: the set of taskbars to cover may have changed.
+    private void HandleDisplaySettingsChanged(object? sender, EventArgs e) => PostToUi(ApplyTaskbarOverlay);
 
     private void ShowOverlayMenu(Form? source)
     {
@@ -1141,12 +1161,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             popup.Dispose();
             popup = null;
         }
-        if (overlay is not null)
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= HandleDisplaySettingsChanged;
+        foreach (var overlay in overlays)
         {
             overlay.Close();
             overlay.Dispose();
-            overlay = null;
         }
+        overlays.Clear();
         if (settingsForm is not null)
         {
             settingsForm.Close();
