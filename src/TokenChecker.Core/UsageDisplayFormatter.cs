@@ -157,6 +157,65 @@ public static class UsageDisplayFormatter
         };
     }
 
+    // Compact per-account values for the taskbar overlay; disabled accounts are left out.
+    public static IReadOnlyList<OverlayEntry> GetOverlayEntries(
+        IReadOnlyList<UsageSnapshot> snapshots,
+        UsageDisplayMode mode)
+    {
+        ArgumentNullException.ThrowIfNull(snapshots);
+
+        return snapshots
+            .Where(snapshot => snapshot.Status != ProviderStatus.Disabled)
+            .Select(snapshot =>
+            {
+                var name = !string.IsNullOrWhiteSpace(snapshot.DisplayName)
+                    ? snapshot.DisplayName!
+                    : GetProviderName(snapshot.ProviderId);
+                var isStale = snapshot.Status == ProviderStatus.Stale;
+                var plan = GetOverlayPlan(snapshot, name);
+                if (snapshot.Status is not (ProviderStatus.Ready or ProviderStatus.Stale))
+                {
+                    // The coordinator's placeholder before the first refresh is not an error yet. The account
+                    // name is already shown, so the sign-out status leaves out the provider name.
+                    var status = snapshot switch
+                    {
+                        { ErrorSummary: "조회 전" } => "조회 중",
+                        { Status: ProviderStatus.SignedOut } => "로그인 필요",
+                        _ => FormatStatus(snapshot)
+                    };
+                    return new OverlayEntry(name, isStale, Array.Empty<OverlayValue>(), status, plan);
+                }
+
+                var values = new List<OverlayValue>(2);
+                if (!IsCodexPro(snapshot))
+                {
+                    values.Add(CreateOverlayValue("5h", SelectWindow(snapshot, TimeSpan.FromHours(5)), mode));
+                }
+
+                values.Add(CreateOverlayValue("W", SelectWindow(snapshot, TimeSpan.FromDays(7)), mode));
+                return new OverlayEntry(name, isStale, values, null, plan);
+            })
+            .ToArray();
+    }
+
+    // Left out when unknown, or when the account name already says it (e.g. an account named "Codex Pro 100").
+    private static string? GetOverlayPlan(UsageSnapshot snapshot, string name)
+    {
+        var plan = FormatPlan(snapshot);
+        if (plan == "확인 불가")
+        {
+            return null;
+        }
+
+        static string Compact(string text) => text.Replace(" ", string.Empty, StringComparison.Ordinal);
+        return Compact(name).Contains(Compact(plan), StringComparison.OrdinalIgnoreCase) ? null : plan;
+    }
+
+    private static OverlayValue CreateOverlayValue(string label, UsageWindow? window, UsageDisplayMode mode) =>
+        window is null
+            ? new OverlayValue(label, "--", double.NaN)
+            : new OverlayValue(label, FormatPercent(window.UsedPercent, mode), window.UsedPercent);
+
     public static double MaxUsedPercent(IReadOnlyList<UsageSnapshot> snapshots)
     {
         ArgumentNullException.ThrowIfNull(snapshots);

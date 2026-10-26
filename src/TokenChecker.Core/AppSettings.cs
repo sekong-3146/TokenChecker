@@ -44,6 +44,9 @@ public sealed class AppSettings
     // 0 is opaque; see MaxPopupTransparencyPercent.
     public int PopupTransparencyPercent { get; set; }
 
+    // Shows a compact usage strip over the primary taskbar, next to the notification area.
+    public bool TaskbarOverlayEnabled { get; set; }
+
     public IReadOnlyList<AgentAccount> GetAgents()
     {
         if (Agents is not null)
@@ -87,6 +90,7 @@ public sealed class AppSettings
         PopupPinned = PopupPinned,
         PopupScreen = PopupScreen,
         PopupTransparencyPercent = PopupTransparencyPercent,
+        TaskbarOverlayEnabled = TaskbarOverlayEnabled,
         Agents = Agents?
             .Where(account => account is not null)
             .Select(account => account!.Clone())

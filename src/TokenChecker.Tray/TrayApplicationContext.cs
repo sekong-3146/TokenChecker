@@ -29,6 +29,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private UsageRefreshCoordinator? coordinator;
     private HttpClient? httpClient;
     private UsagePopupForm? popup;
+    private TaskbarOverlayForm? overlay;
     private SettingsForm? settingsForm;
     private bool initialized;
     private bool closing;
@@ -186,6 +187,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         refreshTimer.Interval = GetRefreshIntervalMilliseconds(settings.RefreshIntervalMinutes);
 
         PublishSnapshots(coordinator.Current);
+        ApplyTaskbarOverlay();
         refreshTimer.Start();
         if (settings.PopupPinned)
         {
@@ -313,6 +315,58 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             popup.UpdateSnapshots(snapshots, settings.DisplayMode);
         }
+
+        if (overlay is not null && !overlay.IsDisposed)
+        {
+            overlay.UpdateSnapshots(
+                snapshots,
+                settings.DisplayMode,
+                settings.WarnThresholdPercent,
+                settings.CriticalThresholdPercent);
+        }
+    }
+
+    // Creates or removes the taskbar overlay to match the saved setting.
+    private void ApplyTaskbarOverlay()
+    {
+        if (closing)
+        {
+            return;
+        }
+
+        if (!settings.TaskbarOverlayEnabled)
+        {
+            overlay?.Close();
+            overlay?.Dispose();
+            overlay = null;
+            return;
+        }
+
+        if (overlay is null || overlay.IsDisposed)
+        {
+            overlay = new TaskbarOverlayForm();
+            overlay.LeftClicked += (_, _) => TogglePopup();
+            overlay.RightClicked += (sender, _) => ShowOverlayMenu(sender as Form);
+            overlay.Start();
+        }
+
+        overlay.UpdateSnapshots(
+            coordinator?.Current ?? Array.Empty<UsageSnapshot>(),
+            settings.DisplayMode,
+            settings.WarnThresholdPercent,
+            settings.CriticalThresholdPercent);
+    }
+
+    private void ShowOverlayMenu(Form? source)
+    {
+        if (closing || source is null || source.IsDisposed)
+        {
+            return;
+        }
+
+        // Like the tray icon's menu: the app must be in the foreground, or a click elsewhere would not close it.
+        SetForegroundWindow(source.Handle);
+        contextMenu.Show(Cursor.Position);
     }
 
     // Called on the UI thread; the gate wait resumes there because the caller's context is kept.
@@ -365,6 +419,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 startupItem.Checked = settings.StartWithWindows;
                 refreshTimer.Interval = GetRefreshIntervalMilliseconds(settings.RefreshIntervalMinutes);
                 ApplyPopupScreen();
+                ApplyTaskbarOverlay();
                 PublishSnapshots(coordinator?.Current ?? Array.Empty<UsageSnapshot>());
                 _ = RefreshAsync(manual: true);
             }).ConfigureAwait(false);
@@ -409,6 +464,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 startupItem.Checked = settings.StartWithWindows;
                 refreshTimer.Interval = GetRefreshIntervalMilliseconds(settings.RefreshIntervalMinutes);
                 ApplyPopupScreen();
+                ApplyTaskbarOverlay();
                 previousCoordinator?.SnapshotUpdated -= HandleCoordinatorSnapshotUpdated;
                 // Accounts removed by this save must not leave kept tokens behind.
                 ClaudeUsageProvider.ForgetPendingTokensExcept(savedSettings.GetAgents()
@@ -1085,6 +1141,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
             popup.Dispose();
             popup = null;
         }
+        if (overlay is not null)
+        {
+            overlay.Close();
+            overlay.Dispose();
+            overlay = null;
+        }
         if (settingsForm is not null)
         {
             settingsForm.Close();
@@ -1104,6 +1166,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
         TrayIconRenderer.Dispose();
         base.ExitThreadCore();
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     private sealed record InitializationResources(
         AppSettings Settings,

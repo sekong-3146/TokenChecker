@@ -104,12 +104,15 @@ public sealed class SettingsStoreTests
             PopupHeight = 310,
             PopupPinned = true,
             PopupScreen = @"\\.\DISPLAY2",
-            PopupTransparencyPercent = 35
+            PopupTransparencyPercent = 35,
+            TaskbarOverlayEnabled = true
         };
 
         store.Save(expected);
         var actual = store.Load();
 
+        Assert.IsTrue(actual.TaskbarOverlayEnabled);
+        Assert.IsTrue(expected.Clone().TaskbarOverlayEnabled);
         Assert.AreEqual(expected.PopupWidth, actual.PopupWidth);
         Assert.AreEqual(expected.PopupHeight, actual.PopupHeight);
         Assert.AreEqual(expected.PopupPinned, actual.PopupPinned);

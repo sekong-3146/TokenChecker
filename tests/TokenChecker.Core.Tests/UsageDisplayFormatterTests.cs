@@ -282,6 +282,82 @@ public sealed class UsageDisplayFormatterTests
         Assert.AreSame(overall, selected);
     }
 
+    [TestMethod]
+    public void GetOverlayEntries_ShowsFiveHourAndWeeklyValuesAndSkipsDisabledAccounts()
+    {
+        var claude = CreateSnapshot(
+            "claude",
+            "claude",
+            "max_5x",
+            CreateWindow("five_hour", 42, TimeSpan.FromHours(5)),
+            CreateWindow("seven_day", 18, TimeSpan.FromDays(7))) with { DisplayName = "Claude Max" };
+        var disabled = CreateSnapshot("codex", "codex", "plus") with { Status = ProviderStatus.Disabled };
+
+        var entries = UsageDisplayFormatter.GetOverlayEntries(new[] { claude, disabled }, UsageDisplayMode.Remaining);
+
+        Assert.AreEqual(1, entries.Count);
+        Assert.AreEqual("Claude Max", entries[0].Name);
+        Assert.AreEqual("Max 5x", entries[0].Plan);
+        Assert.IsFalse(entries[0].IsStale);
+        Assert.IsNull(entries[0].StatusText);
+        CollectionAssert.AreEqual(new[] { "5h", "W" }, entries[0].Values.Select(value => value.Label).ToArray());
+        CollectionAssert.AreEqual(new[] { "58%", "82%" }, entries[0].Values.Select(value => value.Text).ToArray());
+        // Colors follow the used share even when remaining values are shown.
+        Assert.AreEqual(42d, entries[0].Values[0].UsedPercent);
+    }
+
+    [TestMethod]
+    public void GetOverlayEntries_CodexProShowsOnlyWeeklyAndMissingWindowsShowDashes()
+    {
+        var pro = CreateSnapshot(
+            "codex-account",
+            "codex",
+            "prolite",
+            CreateWindow("codex:secondary", 7, TimeSpan.FromDays(7)),
+            CreateWindow("codex:primary", 60, TimeSpan.FromHours(5)));
+        var empty = CreateSnapshot("codex", "codex", "plus") with { Status = ProviderStatus.Stale };
+
+        var entries = UsageDisplayFormatter.GetOverlayEntries(new[] { pro, empty }, UsageDisplayMode.Used);
+
+        Assert.AreEqual("Pro 100", entries[0].Plan);
+        Assert.AreEqual("Plus", entries[1].Plan);
+        Assert.AreEqual(1, entries[0].Values.Count);
+        Assert.AreEqual("W", entries[0].Values[0].Label);
+        Assert.AreEqual("7%", entries[0].Values[0].Text);
+        Assert.AreEqual("GPT", entries[1].Name);
+        Assert.IsTrue(entries[1].IsStale);
+        CollectionAssert.AreEqual(new[] { "--", "--" }, entries[1].Values.Select(value => value.Text).ToArray());
+        Assert.IsTrue(double.IsNaN(entries[1].Values[0].UsedPercent));
+    }
+
+    [TestMethod]
+    public void GetOverlayEntries_ReplacesValuesWithStatusWhenThereIsNoData()
+    {
+        var signedOut = CreateSnapshot("claude", "claude", null) with { Status = ProviderStatus.SignedOut };
+        var pending = CreateSnapshot("codex", "codex", null) with
+        {
+            Status = ProviderStatus.UnknownError,
+            ErrorSummary = "조회 전"
+        };
+
+        var entries = UsageDisplayFormatter.GetOverlayEntries(new[] { signedOut, pending }, UsageDisplayMode.Used);
+
+        Assert.AreEqual("로그인 필요", entries[0].StatusText);
+        Assert.AreEqual(0, entries[0].Values.Count);
+        Assert.IsNull(entries[0].Plan);
+        Assert.AreEqual("조회 중", entries[1].StatusText);
+    }
+
+    [TestMethod]
+    public void GetOverlayEntries_OmitsPlanAlreadyInAccountName()
+    {
+        var named = CreateSnapshot("codex-account", "codex", "prolite") with { DisplayName = "Codex Pro100" };
+
+        var entries = UsageDisplayFormatter.GetOverlayEntries(new[] { named }, UsageDisplayMode.Used);
+
+        Assert.IsNull(entries[0].Plan);
+    }
+
     private static UsageWindow CreateWindow(
         string id,
         double usedPercent,

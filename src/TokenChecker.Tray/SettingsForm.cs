@@ -16,15 +16,16 @@ internal sealed class SettingsForm : Form
     private readonly NumericUpDown warnThresholdInput;
     private readonly NumericUpDown criticalThresholdInput;
     private readonly CheckBox startWithWindowsCheckBox;
-    private readonly TextBox codexPathInput;
-    private readonly Button browseButton;
-    private readonly ColumnStyle browseColumnStyle;
+    private readonly CheckBox taskbarOverlayCheckBox;
+    // No longer editable here (Codex is found on PATH or in its install folder); an older saved path is kept.
+    private readonly string? codexExecutablePath;
     private readonly Label agentsTitleLabel;
     private readonly FlowLayoutPanel agentRowsPanel;
     private readonly ComboBox addAgentKindComboBox;
     private readonly Button addAgentButton;
     private readonly Label agentLimitLabel;
     private Button saveButton = null!;
+    private Button applyButton = null!;
     private Button cancelButton = null!;
     private readonly Func<AppSettings, Task> saveChangesAsync;
     private readonly Func<AgentAccount, string?, CancellationToken, Task<AgentLoginResult>> loginAsync;
@@ -67,14 +68,14 @@ internal sealed class SettingsForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 10,
+            RowCount = 9,
             Padding = new Padding(Dip(14), Dip(14), Dip(14), Dip(8)),
             BackColor = SystemColors.Window,
             ForeColor = SystemColors.WindowText
         };
         content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Dip(145)));
         content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (var index = 0; index < 8; index++)
+        for (var index = 0; index < 7; index++)
         {
             content.RowStyles.Add(new RowStyle(SizeType.Absolute, Dip(40)));
         }
@@ -155,44 +156,34 @@ internal sealed class SettingsForm : Form
             Text = "Windows 시작 시 실행",
             AutoSize = true,
             Checked = startupEnabled,
-            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, Dip(10), Dip(24), 0),
             AccessibleName = "Windows 시작 시 실행",
             Name = "StartWithWindowsCheckBox"
         };
-        content.Controls.Add(startWithWindowsCheckBox, 0, 6);
-        content.SetColumnSpan(startWithWindowsCheckBox, 2);
-
-        codexPathInput = new TextBox
+        taskbarOverlayCheckBox = new CheckBox
         {
-            Text = settings.CodexExecutablePath ?? string.Empty,
-            Dock = DockStyle.Fill,
-            MaxLength = 1024,
-            AccessibleName = "Codex 실행 파일 경로",
-            Name = "CodexPathInput"
+            Text = "작업 표시줄에 사용량 표시",
+            AutoSize = true,
+            Checked = settings.TaskbarOverlayEnabled,
+            Margin = new Padding(0, Dip(10), 0, 0),
+            AccessibleName = "작업 표시줄에 사용량 표시",
+            Name = "TaskbarOverlayCheckBox"
         };
-        var codexPathPanel = new TableLayoutPanel
+        // Both options share one row so the agent list keeps its height on short screens.
+        var optionsPanel = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 1,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
             Margin = new Padding(0),
             BackColor = SystemColors.Window
         };
-        codexPathPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        browseColumnStyle = new ColumnStyle(SizeType.Absolute, Dip(70));
-        codexPathPanel.ColumnStyles.Add(browseColumnStyle);
-        codexPathPanel.Controls.Add(codexPathInput, 0, 0);
-        browseButton = new Button
-        {
-            Text = "찾기...",
-            Dock = DockStyle.Fill,
-            Margin = new Padding(Dip(5), 0, 0, 0),
-            AccessibleName = "Codex 실행 파일 찾기",
-            Name = "CodexBrowseButton"
-        };
-        browseButton.Click += BrowseButton_Click;
-        codexPathPanel.Controls.Add(browseButton, 1, 0);
-        AddSettingRow(content, 7, "Codex 경로", codexPathPanel);
+        optionsPanel.Controls.Add(startWithWindowsCheckBox);
+        optionsPanel.Controls.Add(taskbarOverlayCheckBox);
+        content.Controls.Add(optionsPanel, 0, 6);
+        content.SetColumnSpan(optionsPanel, 2);
+
+        codexExecutablePath = settings.CodexExecutablePath;
 
         agentsTitleLabel = new Label
         {
@@ -202,7 +193,7 @@ internal sealed class SettingsForm : Form
             AccessibleName = "확인할 에이전트 수",
             Name = "AgentsTitleLabel"
         };
-        content.Controls.Add(agentsTitleLabel, 0, 8);
+        content.Controls.Add(agentsTitleLabel, 0, 7);
         content.SetColumnSpan(agentsTitleLabel, 2);
 
         var agentsPanel = new TableLayoutPanel
@@ -263,7 +254,7 @@ internal sealed class SettingsForm : Form
         };
         addPanel.Controls.Add(agentLimitLabel, 2, 0);
         agentsPanel.Controls.Add(addPanel, 0, 1);
-        content.Controls.Add(agentsPanel, 0, 9);
+        content.Controls.Add(agentsPanel, 0, 8);
         content.SetColumnSpan(agentsPanel, 2);
 
         Controls.Add(content);
@@ -278,9 +269,6 @@ internal sealed class SettingsForm : Form
     protected override void OnDpiChanged(DpiChangedEventArgs e)
     {
         base.OnDpiChanged(e);
-        // WinForms rescales a table's last absolute column from its current width, not its style,
-        // which inflated these columns on a real 150% monitor; set them back to exact values.
-        browseColumnStyle.Width = Dip(70);
         RebuildAgentRows();
         FitToWorkArea();
     }
@@ -392,6 +380,16 @@ internal sealed class SettingsForm : Form
             Name = "SaveButton"
         };
         saveButton.Click += SaveButton_Click;
+        applyButton = new Button
+        {
+            Text = "적용",
+            AutoSize = true,
+            MinimumSize = new Size(Dip(78), Dip(29)),
+            DialogResult = DialogResult.None,
+            AccessibleName = "설정 적용",
+            Name = "ApplyButton"
+        };
+        applyButton.Click += ApplyButton_Click;
         cancelButton = new Button
         {
             Text = "취소",
@@ -403,6 +401,7 @@ internal sealed class SettingsForm : Form
         };
         cancelButton.Click += CancelButton_Click;
         buttons.Controls.Add(saveButton);
+        buttons.Controls.Add(applyButton);
         buttons.Controls.Add(cancelButton);
         return buttons;
     }
@@ -540,7 +539,7 @@ internal sealed class SettingsForm : Form
         {
             var result = await loginAsync(
                 replacement.Clone(),
-                string.IsNullOrWhiteSpace(codexPathInput.Text) ? null : codexPathInput.Text.Trim(),
+                codexExecutablePath,
                 activeCancellation.Token);
             if (!formClosing && !IsDisposed && !Disposing)
             {
@@ -599,11 +598,10 @@ internal sealed class SettingsForm : Form
     private void UpdateBusyState()
     {
         saveButton.Enabled = !loginInProgress && !saving;
+        applyButton.Enabled = !loginInProgress && !saving;
         cancelButton.Enabled = !saving;
         cancelButton.Text = loginInProgress ? "로그인 취소" : "취소";
         cancelButton.AccessibleName = loginInProgress ? "로그인 취소" : "설정 취소";
-        codexPathInput.Enabled = !loginInProgress && !saving;
-        browseButton.Enabled = !loginInProgress && !saving;
         refreshIntervalComboBox.Enabled = !loginInProgress && !saving;
         displayModeComboBox.Enabled = !loginInProgress && !saving;
         popupScreenComboBox.Enabled = !loginInProgress && !saving;
@@ -612,6 +610,7 @@ internal sealed class SettingsForm : Form
         warnThresholdInput.Enabled = !loginInProgress && !saving;
         criticalThresholdInput.Enabled = !loginInProgress && !saving;
         startWithWindowsCheckBox.Enabled = !loginInProgress && !saving;
+        taskbarOverlayCheckBox.Enabled = !loginInProgress && !saving;
         addAgentButton.Enabled = !loginInProgress && !saving && agents.Count < AppSettings.MaxAgents;
         addAgentKindComboBox.Enabled = !loginInProgress && !saving && agents.Count < AppSettings.MaxAgents;
 
@@ -813,8 +812,18 @@ internal sealed class SettingsForm : Form
         AccessibleName = accessibleName
     };
 
-    private async void SaveButton_Click(object? sender, EventArgs e)
+    private async void SaveButton_Click(object? sender, EventArgs e) => await SaveAsync(closeWhenSaved: true);
+
+    // Saves the same way as the save button but keeps the dialog open for further changes.
+    private async void ApplyButton_Click(object? sender, EventArgs e) => await SaveAsync(closeWhenSaved: false);
+
+    private async Task SaveAsync(bool closeWhenSaved)
     {
+        if (saving || loginInProgress)
+        {
+            return;
+        }
+
         var warnThreshold = decimal.ToInt32(warnThresholdInput.Value);
         var criticalThreshold = decimal.ToInt32(criticalThresholdInput.Value);
         if (criticalThreshold < warnThreshold)
@@ -874,9 +883,8 @@ internal sealed class SettingsForm : Form
                 ? popupScreenDeviceNames[popupScreenComboBox.SelectedIndex]
                 : null,
             PopupTransparencyPercent = decimal.ToInt32(popupTransparencyInput.Value),
-            CodexExecutablePath = string.IsNullOrWhiteSpace(codexPathInput.Text)
-                ? null
-                : codexPathInput.Text.Trim(),
+            TaskbarOverlayEnabled = taskbarOverlayCheckBox.Checked,
+            CodexExecutablePath = codexExecutablePath,
             Agents = agents.Select(account => account.Clone()).ToList()
         };
 
@@ -888,6 +896,11 @@ internal sealed class SettingsForm : Form
             if (IsDisposed || Disposing)
             {
                 // The app exited while the save was running; there is no dialog left to close.
+                return;
+            }
+
+            if (!closeWhenSaved)
+            {
                 return;
             }
 
@@ -917,22 +930,6 @@ internal sealed class SettingsForm : Form
             {
                 UpdateBusyState();
             }
-        }
-    }
-
-    private void BrowseButton_Click(object? sender, EventArgs e)
-    {
-        using var dialog = new OpenFileDialog
-        {
-            Title = "Codex 실행 파일 선택",
-            Filter = "실행 파일 (*.exe)|*.exe|모든 파일 (*.*)|*.*",
-            CheckFileExists = true,
-            Multiselect = false,
-            FileName = codexPathInput.Text
-        };
-        if (dialog.ShowDialog(this) == DialogResult.OK)
-        {
-            codexPathInput.Text = dialog.FileName;
         }
     }
 
