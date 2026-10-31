@@ -715,7 +715,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void ShowAbout()
     {
         MessageBox.Show(
-            "TokenChecker" + Environment.NewLine + "버전 1.0.2" + Environment.NewLine + "ChatGPT / Codex와 Claude 사용량을 확인합니다.",
+            "TokenChecker" + Environment.NewLine + "버전 1.0.3" + Environment.NewLine + "ChatGPT / Codex와 Claude 사용량을 확인합니다.",
             "정보",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
