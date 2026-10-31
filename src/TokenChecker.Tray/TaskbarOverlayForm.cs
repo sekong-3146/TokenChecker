@@ -201,7 +201,8 @@ internal sealed class TaskbarOverlayForm : Form
         // A vertical taskbar has no room for the text; an auto-hidden one has slid almost off the screen.
         if (taskbarBounds.Width <= taskbarBounds.Height ||
             onScreen.Height < taskbarBounds.Height - 2 ||
-            IsFullScreenWindowActive(taskbar, screenBounds))
+            IsFullScreenWindowActive(taskbar, screenBounds) ||
+            IsTaskbarCovered(taskbar, taskbarBounds))
         {
             HideOverlay();
             return;
@@ -528,6 +529,43 @@ internal sealed class TaskbarOverlayForm : Form
         return GetWindowRect(foreground, out var rect) && rect.ToRectangle().Contains(screenBounds);
     }
 
+    // Windows moves the taskbar behind a full-screen window (a video, a game) and leaves it there after focus
+    // moves to another window, where the foreground check above no longer sees it. The overlay is topmost, so
+    // it would stay over the video; it hides whenever a real window above the taskbar covers all of it.
+    private static bool IsTaskbarCovered(IntPtr taskbar, Rectangle taskbarBounds)
+    {
+        GetWindowThreadProcessId(taskbar, out var shellProcessId);
+        var ownProcessId = (uint)Environment.ProcessId;
+        var current = GetWindow(taskbar, GwHwndPrev);
+        for (var guard = 0; current != IntPtr.Zero && guard < 1024; guard++, current = GetWindow(current, GwHwndPrev))
+        {
+            if (!IsWindowVisible(current) || !GetWindowRect(current, out var rect) ||
+                !rect.ToRectangle().Contains(taskbarBounds))
+            {
+                continue;
+            }
+
+            GetWindowThreadProcessId(current, out var processId);
+            if (processId == ownProcessId || processId == shellProcessId)
+            {
+                continue;
+            }
+
+            // Click-through and tool windows are overlays (GPU and recording tools), not content; cloaked ones
+            // are hidden app frames that still report as visible.
+            var exStyle = GetWindowLongPtr(current, GwlExStyle).ToInt64();
+            if ((exStyle & (WsExTransparent | WsExToolWindow)) != 0 ||
+                (DwmGetWindowAttribute(current, DwmwaCloaked, out var cloaked, sizeof(int)) == 0 && cloaked != 0))
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
     private static bool IsLightTaskbar()
     {
         try
@@ -555,6 +593,9 @@ internal sealed class TaskbarOverlayForm : Form
     private const int WsExToolWindow = 0x00000080;
     private const int WsExNoActivate = 0x08000000;
     private const int WsExTopMost = 0x00000008;
+    private const int WsExTransparent = 0x00000020;
+    private const int GwlExStyle = -20;
+    private const int DwmwaCloaked = 14;
     private const int WmMouseActivate = 0x0021;
     private const int WmSettingChange = 0x001A;
     private const int WmDisplayChange = 0x007E;
@@ -643,6 +684,12 @@ internal sealed class TaskbarOverlayForm : Form
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
